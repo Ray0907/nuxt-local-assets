@@ -1,0 +1,68 @@
+{
+  "name": "nuxt-local-assets",
+  "version": "0.1.0",
+  "description": "Nuxt module for serving local assets with authentication, authorization, and audit logging",
+  "license": "MIT",
+  "author": "Ray0907",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ray0907/nuxt-local-assets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ray0907/nuxt-local-assets/issues"
+  },
+  "homepage": "https://github.com/Ray0907/nuxt-local-assets#readme",
+  "keywords": [
+    "nuxt",
+    "nuxt-module",
+    "file-server",
+    "local-assets",
+    "authentication",
+    "authorization",
+    "audit-logging"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/module.mjs",
+      "require": "./dist/module.cjs"
+    }
+  },
+  "main": "./dist/module.cjs",
+  "module": "./dist/module.mjs",
+  "types": "./dist/types.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepack": "nuxt-module-build build",
+    "dev": "nuxi dev playground",
+    "dev:build": "nuxi build playground",
+    "dev:prepare": "nuxt-module-build build --stub && nuxt-module-build prepare && nuxi prepare playground",
+    "release": "npm run lint && npm run prepack && changelogen --release && npm publish && git push --follow-tags",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "dependencies": {
+    "@nuxt/kit": "^3.14.0",
+    "defu": "^6.1.4",
+    "mime-types": "^2.1.35"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "^1.6.0",
+    "@nuxt/eslint-config": "^0.6.0",
+    "@nuxt/module-builder": "^1.0.2",
+    "@nuxt/schema": "^3.14.0",
+    "@nuxt/test-utils": "^3.14.0",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.0.0",
+    "changelogen": "^0.5.7",
+    "eslint": "^9.14.0",
+    "nuxt": "^3.14.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "packageManager": "pnpm@10.27.0+sha512.72d699da16b1179c14ba9e64dc71c9a40988cbdc65c264cb0e489db7de917f20dcf4d64d8723625f2969ba52d4b7e2a1170682d9ac2a5dcaeaab732b7e16f04a"
+}

@@ -1,0 +1,10 @@
+Hello, this is a test file for nuxt-local-assets module.
+This file is served from the local filesystem without going through the build pipeline.
+
+Line 3: Testing range requests
+Line 4: Testing ETag caching
+Line 5: Testing authentication
+Line 6: Testing authorization
+Line 7: Testing audit logging
+
+End of file.
