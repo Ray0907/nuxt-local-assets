@@ -80,6 +80,97 @@ export default defineNuxtConfig({
 })
 ```
 
+## Configuration Reference
+
+### dirs
+
+Directory configurations for serving files.
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| name | string | Yes | Unique identifier for this directory |
+| path | string | Yes | Absolute path to files in production |
+| route | string | Yes | URL prefix (e.g., `/files` serves at `/files/*`) |
+| devPath | string | No | Relative path used in development mode |
+
+### auth
+
+Authentication and authorization settings.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| required | boolean | false | Require authenticated user for all requests |
+| authorize | string | - | Path to custom authorization function (e.g., `~/server/utils/authorize`) |
+
+### audit
+
+Audit logging configuration.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| enabled | boolean | false | Enable audit logging |
+| handler | string | - | Path to audit handler function (e.g., `~/server/utils/audit`) |
+
+### security
+
+Security restrictions.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| allowedMimeTypes | string[] | [] | Whitelist of allowed MIME types. Supports wildcards: `image/*`, `text/*`. Empty = allow all |
+| blockedExtensions | string[] | ['.exe', '.sh', '.bat', '.cmd', '.ps1'] | File extensions to block |
+| maxFileSize | string | '100mb' | Maximum file size. Supports: `b`, `kb`, `mb`, `gb`, `tb` |
+
+### cache
+
+HTTP caching configuration.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| etag | boolean | true | Generate ETag header for cache validation |
+| lastModified | boolean | true | Send Last-Modified header |
+| rules | CacheRule[] | [] | Pattern-based Cache-Control rules |
+
+**CacheRule format:**
+
+```typescript
+{
+  match: RegExp,        // Pattern to match file paths
+  maxAge: number,       // Cache-Control max-age in seconds
+  mustRevalidate?: boolean,
+  immutable?: boolean,
+}
+```
+
+### compression
+
+Response compression settings.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| enabled | boolean | true | Enable gzip/brotli compression |
+| types | string[] | ['text/*', 'application/json', 'application/xml', 'application/javascript'] | MIME types to compress |
+| threshold | string | '1kb' | Minimum file size to compress |
+
+### rangeRequest
+
+HTTP Range request support (for video streaming, resume downloads).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| enabled | boolean | true | Enable Range request support (206 Partial Content) |
+| maxChunkSize | string | - | Maximum bytes per range request (e.g., `10mb`) |
+
+### redirect
+
+URL redirect configuration.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| handler | string | - | Path to redirect function (e.g., `~/server/utils/redirect`) |
+
+---
+
 ## Authorization Function
 
 ```typescript

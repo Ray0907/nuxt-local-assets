@@ -12,10 +12,14 @@ import type { LocalAssetsOptions, LocalAssetsDirConfig, FileAccessContext, Audit
 
 /**
  * Base headers applied to all responses (V8 optimization: reuse object)
+ * Security headers based on OWASP recommendations
  */
 const BASE_HEADERS = {
 	'Accept-Ranges': 'bytes',
 	'X-Content-Type-Options': 'nosniff',
+	'X-Frame-Options': 'DENY',
+	'X-Download-Options': 'noopen',
+	'Referrer-Policy': 'strict-origin-when-cross-origin',
 } as const
 
 /**
@@ -47,6 +51,35 @@ async function getUserFromEvent(event: any): Promise<unknown | null> {
 		return event.context.session.user
 	}
 	return null
+}
+
+/**
+ * Validate redirect URL to prevent open redirect attacks
+ * Only allows relative URLs (same origin)
+ */
+function isValidRedirectUrl(url: string): boolean {
+	// Block empty URLs
+	if (!url || typeof url !== 'string') {
+		return false
+	}
+
+	// Block protocol-relative URLs (//example.com)
+	if (url.startsWith('//')) {
+		return false
+	}
+
+	// Block absolute URLs with protocols
+	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) {
+		return false
+	}
+
+	// Allow relative URLs starting with /
+	if (url.startsWith('/')) {
+		return true
+	}
+
+	// Block everything else (could be interpreted as relative by browser)
+	return false
 }
 
 /**
@@ -92,6 +125,13 @@ export default defineEventHandler(async (event) => {
 			if (redirect_result) {
 				const redirect_url = typeof redirect_result === 'string' ? redirect_result : redirect_result.url
 				const status_code = typeof redirect_result === 'object' ? (redirect_result.statusCode || 302) : 302
+
+				// Validate redirect URL to prevent open redirect attacks
+				if (!isValidRedirectUrl(redirect_url)) {
+					console.warn(`[nuxt-local-assets] Blocked potentially malicious redirect URL: ${redirect_url}`)
+					throw createError({ statusCode: 403, message: 'Access denied' })
+				}
+
 				return sendRedirect(event, redirect_url, status_code)
 			}
 		}
@@ -107,7 +147,7 @@ export default defineEventHandler(async (event) => {
 	// Check blocked extensions
 	if (config.security?.blockedExtensions && isExtensionBlocked(safe_path, config.security.blockedExtensions)) {
 		await logAudit(event, config, dir_config, safe_path, 'denied', 'blocked_extension')
-		throw createError({ statusCode: 403, message: 'File type not allowed' })
+		throw createError({ statusCode: 403, message: 'Access denied' })
 	}
 
 	// Resolve full file path
@@ -142,7 +182,7 @@ export default defineEventHandler(async (event) => {
 		const max_size = parseFileSize(config.security.maxFileSize)
 		if (max_size > 0 && file_stat.size > max_size) {
 			await logAudit(event, config, dir_config, safe_path, 'denied', 'file_too_large')
-			throw createError({ statusCode: 403, message: 'File too large' })
+			throw createError({ statusCode: 403, message: 'Access denied' })
 		}
 	}
 
@@ -153,7 +193,7 @@ export default defineEventHandler(async (event) => {
 	if (config.security?.allowedMimeTypes && config.security.allowedMimeTypes.length > 0) {
 		if (!isMimeTypeAllowed(base_mime, config.security.allowedMimeTypes)) {
 			await logAudit(event, config, dir_config, safe_path, 'denied', 'mime_not_allowed')
-			throw createError({ statusCode: 403, message: 'File type not allowed' })
+			throw createError({ statusCode: 403, message: 'Access denied' })
 		}
 	}
 
