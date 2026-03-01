@@ -22,7 +22,7 @@ describe('computeETagFromValues', () => {
 
 describe('getCacheControl', () => {
 	it('returns default cache control', () => {
-		expect(getCacheControl('file.txt', [])).toBe('private, no-cache, must-revalidate')
+		expect(getCacheControl('file.txt')).toBe('private, no-cache, must-revalidate')
 	})
 
 	it('applies matching rules', () => {
@@ -31,9 +31,9 @@ describe('getCacheControl', () => {
 			{ match: /\.pdf$/i, maxAge: 3600 },
 		]
 
-		expect(getCacheControl('image.jpg', rules)).toBe('private, max-age=86400')
-		expect(getCacheControl('doc.pdf', rules)).toBe('private, max-age=3600')
-		expect(getCacheControl('file.txt', rules)).toBe('private, no-cache, must-revalidate')
+		expect(getCacheControl('image.jpg', { rules })).toBe('private, max-age=86400')
+		expect(getCacheControl('doc.pdf', { rules })).toBe('private, max-age=3600')
+		expect(getCacheControl('file.txt', { rules })).toBe('private, no-cache, must-revalidate')
 	})
 
 	it('handles mustRevalidate option', () => {
@@ -41,7 +41,7 @@ describe('getCacheControl', () => {
 			{ match: /\.jpg$/i, maxAge: 86400, mustRevalidate: true },
 		]
 
-		expect(getCacheControl('image.jpg', rules)).toBe('private, max-age=86400, must-revalidate')
+		expect(getCacheControl('image.jpg', { rules })).toBe('private, max-age=86400, must-revalidate')
 	})
 
 	it('handles immutable option', () => {
@@ -49,7 +49,29 @@ describe('getCacheControl', () => {
 			{ match: /\.jpg$/i, maxAge: 86400, immutable: true },
 		]
 
-		expect(getCacheControl('image.jpg', rules)).toBe('private, max-age=86400, immutable')
+		expect(getCacheControl('image.jpg', { rules })).toBe('private, max-age=86400, immutable')
+	})
+
+	it('uses public cacheability when configured as default', () => {
+		expect(getCacheControl('file.txt', { cacheability: 'public' })).toBe('public, no-cache, must-revalidate')
+	})
+
+	it('uses public cacheability with max-age', () => {
+		const rules = [
+			{ match: /\.jpg$/i, maxAge: 86400 },
+		]
+		expect(getCacheControl('image.jpg', { rules, cacheability: 'public' })).toBe('public, max-age=86400')
+	})
+
+	it('allows per-rule cacheability override', () => {
+		const rules = [
+			{ match: /\.jpg$/i, maxAge: 86400, cacheability: 'public' as const },
+			{ match: /\.pdf$/i, maxAge: 3600 },
+		]
+		// jpg rule overrides to public
+		expect(getCacheControl('image.jpg', { rules, cacheability: 'private' })).toBe('public, max-age=86400')
+		// pdf rule inherits default private
+		expect(getCacheControl('doc.pdf', { rules, cacheability: 'private' })).toBe('private, max-age=3600')
 	})
 })
 

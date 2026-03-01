@@ -1,7 +1,6 @@
 import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
-import { pipeline } from 'stream/promises'
-import { defineEventHandler, getHeader, setHeader, setHeaders, setResponseStatus, sendStream, createError, getRequestURL, sendRedirect } from 'h3'
+import { defineEventHandler, getHeader, setHeader, setHeaders, setResponseStatus, sendStream, createError, getRequestURL, sendRedirect, getMethod, getRequestIP } from 'h3'
 import { useRuntimeConfig } from '#imports'
 import { sanitizePath, resolveFilePath, extractRelativePath, isPathWithinBase } from './utils/path'
 import { computeETag, getCacheHeaders, isClientCacheValid } from './utils/cache'
@@ -36,10 +35,9 @@ function findMatchingDir(url_path: string, dirs: LocalAssetsDirConfig[]): LocalA
 }
 
 /**
- * Get user from event (placeholder - should be overridden by auth integration)
+ * Default user extraction - tries common auth patterns
  */
-async function getUserFromEvent(event: any): Promise<unknown | null> {
-	// Try common auth patterns
+function getDefaultUser(event: any): unknown | null {
 	if (event.context?.user) {
 		return event.context.user
 	}
@@ -51,6 +49,30 @@ async function getUserFromEvent(event: any): Promise<unknown | null> {
 		return event.context.session.user
 	}
 	return null
+}
+
+/**
+ * Get user from event using custom extractor or default patterns
+ * Memoizes result on event.context to avoid redundant extraction per request
+ */
+async function getUserFromEvent(event: any, user_extractor_path?: string): Promise<unknown | null> {
+	if (event.context._localAssetsUser !== undefined) {
+		return event.context._localAssetsUser
+	}
+
+	let user: unknown | null = null
+	if (user_extractor_path) {
+		const extractor = await loadFunction<(event: any) => unknown | null>(user_extractor_path, 'user extractor')
+		if (extractor) {
+			user = await extractor(event)
+		}
+	}
+	else {
+		user = getDefaultUser(event)
+	}
+
+	event.context._localAssetsUser = user
+	return user
 }
 
 /**
@@ -83,16 +105,6 @@ function isValidRedirectUrl(url: string): boolean {
 }
 
 /**
- * Get client IP address
- */
-function getClientIP(event: any): string {
-	return getHeader(event, 'x-forwarded-for')?.split(',')[0]?.trim()
-		|| getHeader(event, 'x-real-ip')
-		|| event.node?.req?.socket?.remoteAddress
-		|| 'unknown'
-}
-
-/**
  * Main file handler
  */
 export default defineEventHandler(async (event) => {
@@ -111,8 +123,8 @@ export default defineEventHandler(async (event) => {
 
 	// Check for redirects (before any file system operations)
 	if (config.redirect?.handler) {
-		const user = await getUserFromEvent(event)
-		const redirect_fn = await loadRedirectFunction(config.redirect.handler)
+		const user = await getUserFromEvent(event, config.auth?.userExtractor)
+		const redirect_fn = await loadFunction<(ctx: RedirectContext) => any>(config.redirect.handler, 'redirect function')
 		if (redirect_fn) {
 			const redirect_ctx: RedirectContext = {
 				filePath: relative_path,
@@ -198,7 +210,7 @@ export default defineEventHandler(async (event) => {
 	}
 
 	// Authentication check
-	const user = await getUserFromEvent(event)
+	const user = await getUserFromEvent(event, config.auth?.userExtractor)
 
 	if (config.auth?.required && !user) {
 		await logAudit(event, config, dir_config, safe_path, 'denied', 'unauthenticated')
@@ -207,7 +219,7 @@ export default defineEventHandler(async (event) => {
 
 	// Authorization check
 	if (config.auth?.authorize) {
-		const authorize_fn = await loadAuthorizeFunction(config.auth.authorize)
+		const authorize_fn = await loadFunction<(ctx: FileAccessContext) => boolean | Promise<boolean>>(config.auth.authorize, 'authorize function')
 		if (authorize_fn) {
 			const context: FileAccessContext = {
 				user,
@@ -286,11 +298,12 @@ export default defineEventHandler(async (event) => {
 	const compression_threshold = compression_config?.threshold
 		? parseFileSize(compression_config.threshold)
 		: 1024 // Default 1kb
-	const can_compress = compression_config?.enabled !== false
+	const is_compressible = compression_config?.enabled !== false
+		&& shouldCompress(base_mime, compression_config?.types || [])
+	const can_compress = is_compressible
 		&& compression_encoding !== 'identity'
 		&& !range // Don't compress range requests
 		&& file_stat.size >= compression_threshold
-		&& shouldCompress(base_mime, compression_config?.types || [])
 
 	// Set response headers
 	setHeaders(event, {
@@ -300,15 +313,21 @@ export default defineEventHandler(async (event) => {
 	})
 
 	// Add Vary header if compression is possible for this content type
-	if (compression_config?.enabled !== false && shouldCompress(base_mime, compression_config?.types || [])) {
+	if (is_compressible) {
 		setHeader(event, 'Vary', 'Accept-Encoding')
 	}
+
+	const is_head = getMethod(event) === 'HEAD'
 
 	// Serve partial content (206) or full content (200)
 	if (range) {
 		setResponseStatus(event, 206)
 		setHeader(event, 'Content-Range', formatContentRange(range, file_stat.size))
 		setHeader(event, 'Content-Length', String(getRangeContentLength(range)))
+
+		if (is_head) {
+			return ''
+		}
 
 		return sendStream(event, createReadStream(full_path, {
 			start: range.start,
@@ -324,6 +343,10 @@ export default defineEventHandler(async (event) => {
 			// Remove Content-Length as compressed size is unknown
 			// Transfer-Encoding: chunked will be used automatically
 
+			if (is_head) {
+				return ''
+			}
+
 			const file_stream = createReadStream(full_path)
 			return sendStream(event, file_stream.pipe(compression_stream))
 		}
@@ -331,49 +354,68 @@ export default defineEventHandler(async (event) => {
 
 	// Full file response (uncompressed)
 	setHeader(event, 'Content-Length', String(file_stat.size))
+
+	if (is_head) {
+		return ''
+	}
+
 	return sendStream(event, createReadStream(full_path))
 })
 
 /**
- * Dynamic import helper that handles TypeScript files
+ * Module-level cache for dynamically imported functions
+ * Caches the Promise to prevent thundering herd on concurrent first requests
  */
-async function dynamicImport(path: string): Promise<any> {
-	// For .ts files, use jiti for runtime transpilation
-	if (path.endsWith('.ts')) {
-		const { createJiti } = await import('jiti')
-		const jiti = createJiti(import.meta.url, { interopDefault: true })
-		return jiti.import(path)
+const import_cache = new Map<string, Promise<any>>()
+
+/**
+ * Dynamic import helper that handles TypeScript files
+ * Results are cached at module level so each path is only imported once
+ */
+function dynamicImport(path: string): Promise<any> {
+	const cached = import_cache.get(path)
+	if (cached) {
+		return cached
 	}
-	// For .js/.mjs files, use native import
-	return import(path)
+
+	let promise: Promise<any>
+	if (path.endsWith('.ts')) {
+		// For .ts files, use jiti for runtime transpilation
+		promise = import('jiti').then(({ createJiti }) => {
+			const jiti = createJiti(import.meta.url, { interopDefault: true })
+			return jiti.import(path)
+		})
+	}
+	else {
+		// For .js/.mjs files, use native import
+		promise = import(path)
+	}
+
+	// Cache the promise, but evict on failure so retries are possible
+	import_cache.set(path, promise)
+	promise.catch(() => {
+		import_cache.delete(path)
+	})
+
+	return promise
 }
 
 /**
- * Load authorization function from path
- * Path is already resolved to absolute path by module setup
+ * Load a function from a dynamic import path
+ * Handles default export extraction, type checking, and error logging
  */
-async function loadAuthorizeFunction(path: string): Promise<((ctx: FileAccessContext) => boolean | Promise<boolean>) | null> {
+async function loadFunction<T>(path: string, label: string): Promise<T | null> {
 	try {
 		const module = await dynamicImport(path)
-		return module.default || module
-	}
-	catch (error) {
-		console.warn(`[nuxt-local-assets] Failed to load authorize function from ${path}:`, error)
+		const fn = module.default || module
+		if (typeof fn === 'function') {
+			return fn as T
+		}
+		console.warn(`[nuxt-local-assets] ${label} at ${path} is not a function`)
 		return null
 	}
-}
-
-/**
- * Load redirect function from path
- * Path is already resolved to absolute path by module setup
- */
-async function loadRedirectFunction(path: string): Promise<((ctx: RedirectContext) => string | RedirectResult | null | undefined | Promise<string | RedirectResult | null | undefined>) | null> {
-	try {
-		const module = await dynamicImport(path)
-		return module.default || module
-	}
 	catch (error) {
-		console.warn(`[nuxt-local-assets] Failed to load redirect function from ${path}:`, error)
+		console.warn(`[nuxt-local-assets] Failed to load ${label} from ${path}:`, error)
 		return null
 	}
 }
@@ -395,18 +437,16 @@ async function logAudit(
 	}
 
 	try {
-		const module = await dynamicImport(config.audit.handler)
-		const handler = module.default || module
-
-		if (typeof handler === 'function') {
-			const user = await getUserFromEvent(event)
+		const handler = await loadFunction<(entry: AuditLogEntry) => void | Promise<void>>(config.audit.handler, 'audit handler')
+		if (handler) {
+			const user = await getUserFromEvent(event, config.auth?.userExtractor)
 
 			const entry: AuditLogEntry = {
 				timestamp: new Date(),
 				idUser: user && typeof user === 'object' && 'id' in user ? String((user as any).id) : null,
 				action,
 				filePath: file_path,
-				ipAddress: getClientIP(event),
+				ipAddress: getRequestIP(event, { xForwardedFor: true }) || 'unknown',
 				userAgent: getHeader(event, 'user-agent') || 'unknown',
 				reason,
 				dirName: dir_config.name,

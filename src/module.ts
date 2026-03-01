@@ -85,6 +85,7 @@ export default defineNuxtModule<LocalAssetsOptions>({
 		const resolved_auth = options.auth ? {
 			...options.auth,
 			authorize: resolveUserPath(options.auth.authorize, root_dir),
+			userExtractor: resolveUserPath(options.auth.userExtractor, root_dir),
 		} : options.auth
 
 		const resolved_audit = options.audit ? {
@@ -141,11 +142,18 @@ export default defineNuxtModule<LocalAssetsOptions>({
 		for (const dir of options.dirs) {
 			const route_base = dir.route.startsWith('/') ? dir.route : `/${dir.route}`
 			const route_pattern = `${route_base}/**`
+			const handler_path = resolver.resolve('./runtime/server/handler')
 
 			addServerHandler({
 				route: route_pattern,
 				method: 'get',
-				handler: resolver.resolve('./runtime/server/handler'),
+				handler: handler_path,
+			})
+
+			addServerHandler({
+				route: route_pattern,
+				method: 'head',
+				handler: handler_path,
 			})
 
 			console.log(`[nuxt-local-assets] Registered handler for ${route_pattern}`)

@@ -1,5 +1,5 @@
 import type { Stats } from 'fs'
-import type { CacheRule } from '../../../types'
+import type { CacheRule, CacheDirective } from '../../../types'
 
 /**
  * Pre-allocated buffer for ETag computation (V8 optimization)
@@ -78,17 +78,23 @@ function createMatcher(match: RegExp | string | { source?: string; flags?: strin
  */
 export function getCacheControl(
 	file_path: string,
-	rules: CacheRule[] = [],
-	default_max_age: number = 0,
+	options: {
+		rules?: CacheRule[]
+		defaultMaxAge?: number
+		cacheability?: CacheDirective
+	} = {},
 ): string {
+	const { rules = [], defaultMaxAge = 0, cacheability: default_cacheability = 'private' } = options
+
 	// Find matching rule
 	const matched_rule = rules.find((rule) => {
 		const matcher = createMatcher(rule.match)
 		return matcher(file_path)
 	})
 
-	const max_age = matched_rule?.maxAge ?? default_max_age
-	const directives: string[] = ['private']
+	const max_age = matched_rule?.maxAge ?? defaultMaxAge
+	const cacheability = matched_rule?.cacheability ?? default_cacheability
+	const directives: string[] = [cacheability]
 
 	if (max_age > 0) {
 		directives.push(`max-age=${max_age}`)
@@ -123,6 +129,7 @@ export function getCacheHeaders(
 		etag?: boolean
 		lastModified?: boolean
 		rules?: CacheRule[]
+		cacheability?: CacheDirective
 	} = {},
 ): Record<string, string> {
 	const headers: Record<string, string> = {}
@@ -135,7 +142,10 @@ export function getCacheHeaders(
 		headers['Last-Modified'] = stat.mtime.toUTCString()
 	}
 
-	headers['Cache-Control'] = getCacheControl(file_path, options.rules)
+	headers['Cache-Control'] = getCacheControl(file_path, {
+		rules: options.rules,
+		cacheability: options.cacheability,
+	})
 
 	return headers
 }

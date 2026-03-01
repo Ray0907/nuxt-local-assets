@@ -15,6 +15,11 @@ export interface LocalAssetsDirConfig {
 }
 
 /**
+ * Cache-Control cacheability directive
+ */
+export type CacheDirective = CacheDirective
+
+/**
  * Cache rule configuration
  */
 export interface CacheRule {
@@ -26,6 +31,8 @@ export interface CacheRule {
 	mustRevalidate?: boolean
 	/** Add immutable directive */
 	immutable?: boolean
+	/** Override cacheability for this rule ('private' or 'public') */
+	cacheability?: CacheDirective
 }
 
 /**
@@ -41,6 +48,11 @@ export interface LocalAssetsOptions {
 		required?: boolean
 		/** Path to authorization function (e.g., '~/server/utils/authorize') */
 		authorize?: string
+		/** Path to custom user extractor function (e.g., '~/server/utils/get-user')
+		 * Function signature: (event: H3Event) => unknown | null | Promise<unknown | null>
+		 * If not provided, falls back to checking event.context.user, event.context.auth.user, event.context.session.user
+		 */
+		userExtractor?: string
 	}
 
 	/** Audit logging configuration */
@@ -69,6 +81,11 @@ export interface LocalAssetsOptions {
 		lastModified?: boolean
 		/** Cache rules by file pattern */
 		rules?: CacheRule[]
+		/** Default cacheability directive: 'private' (default) or 'public'
+		 * Use 'private' for auth-protected content, 'public' to allow CDN caching
+		 * Can be overridden per rule via CacheRule.cacheability
+		 */
+		cacheability?: CacheDirective
 	}
 
 	/** Compression configuration */
@@ -144,6 +161,12 @@ export interface AuditLogEntry {
  * Authorization function type
  */
 export type AuthorizeFunction = (ctx: FileAccessContext) => boolean | Promise<boolean>
+
+/**
+ * User extractor function type
+ * Extracts user from H3 event - override if your auth middleware stores user in a non-standard location
+ */
+export type UserExtractorFunction = (event: H3Event) => unknown | null | Promise<unknown | null>
 
 /**
  * Audit handler function type
